@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="image/x-xds">
+    <comment>Xbox 360 texture</comment>
+    <generic-icon name="image-x-generic"/>
+    <glob pattern="*.xds"/>
+    <!-- D3DCOMMON_TYPE_TEXTURE, the flush fields the XDK leaves at
+         0xFFFF0000, and a texture-type GPU fetch constant. -->
+    <magic priority="40">
+      <match type="big32" offset="0" value="0x00000003">
+        <match type="big32" offset="20" value="0xffff0000">
+          <match type="big32" offset="24" value="0xffff0000">
+            <match type="big32" offset="28" value="0x00000002" mask="0x00000003"/>
+          </match>
+        </match>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>
