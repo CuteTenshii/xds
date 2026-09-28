@@ -120,6 +120,101 @@ TEST_CASE("fetch constant fields decode from a real texture header")
     CHECK(xds::describe(info) == "DXT4_5_AS_16_16_16_16 512x128, 10 levels, tiled, swizzle XYZW");
 }
 
+TEST_CASE("fetch constants encode back to the fields they decode to")
+{
+    const auto sameFields = [](const xds::TextureInfo& a, const xds::TextureInfo& b) {
+        return a.format == b.format && a.endian == b.endian && a.dimension == b.dimension && a.tiled == b.tiled
+            && a.packedMips == b.packedMips && a.signedFormat == b.signedFormat && a.width == b.width
+            && a.height == b.height && a.depth == b.depth && a.pitch == b.pitch && a.baseAddress == b.baseAddress
+            && a.mipAddress == b.mipAddress && a.minMipLevel == b.minMipLevel && a.maxMipLevel == b.maxMipLevel
+            && a.swizzle == b.swizzle && a.expAdjust == b.expAdjust;
+    };
+    // tracks/treadmark.xds, and a packed 12x80 texture from a car's gauges.
+    for (const std::array<std::uint32_t, 6>& fetch :
+        {std::array<std::uint32_t, 6>{0x840000FE, 0x00000075, 0x000FE1FF, 0x00000D10, 0x00000240, 0x00010A00},
+            std::array<std::uint32_t, 6>{0x810000FE, 0x00000075, 0x0026A00B, 0x00000D10, 0x00000000, 0x00000A00}}) {
+        const xds::TextureInfo info = xds::decodeFetchConstant(fetch);
+        CHECK(sameFields(xds::decodeFetchConstant(xds::encodeFetchConstant(info)), info));
+    }
+
+    xds::TextureInfo info;
+    info.format = 49;
+    info.endian = xds::Endian::Swap8In32;
+    info.tiled = true;
+    info.packedMips = true;
+    info.width = 300;
+    info.height = 7;
+    info.pitch = 384;
+    info.baseAddress = 0x3000;
+    info.mipAddress = 0x9000;
+    info.maxMipLevel = 8;
+    info.swizzle = {xds::Swizzle::Z, xds::Swizzle::One, xds::Swizzle::X, xds::Swizzle::Zero};
+    info.expAdjust = -3;
+    CHECK(sameFields(xds::decodeFetchConstant(xds::encodeFetchConstant(info)), info));
+    CHECK_EQ(xds::encodeFetchConstant(info)[0] & 3u, 2u);
+}
+
+TEST_CASE("textures from bare data lay out and decode as their files do")
+{
+    synthetic::Spec spec;
+    spec.format = 20;
+    spec.width = 96;
+    spec.height = 40;
+    spec.maxLevel = 6;
+    spec.endian = xds::Endian::Swap8In16;
+    const auto block = [](std::uint32_t level, std::uint32_t bx, std::uint32_t by) {
+        std::vector<std::uint8_t> data = interpolatedBlock(static_cast<std::uint8_t>(level * 30), 255, 0);
+        const auto colour = colorBlock(static_cast<std::uint16_t>(bx * 2000), static_cast<std::uint16_t>(by * 3000), 0);
+        data.insert(data.end(), colour.begin(), colour.end());
+        return data;
+    };
+    const std::vector<std::uint8_t> file = synthetic::build(spec, block);
+    const xds::Texture parsed = xds::Texture::parse(file);
+    const std::span<const std::uint8_t> data = std::span<const std::uint8_t>(file).subspan(xds::kHeaderSize);
+    const xds::Texture bare = xds::Texture::fromData(parsed.info(), data);
+
+    CHECK_EQ(bare.levelCount(), parsed.levelCount());
+    CHECK(bare.textureData().size() == data.size());
+    CHECK(xds::describe(xds::decodeFetchConstant(bare.header().fetchConstant)) == xds::describe(parsed.info()));
+    CHECK_EQ(bare.header().common, 3u);
+    for (std::uint32_t level = 0; level < parsed.levelCount(); ++level) {
+        CHECK_EQ(bare.levelLayout(level).surfaceOffset, parsed.levelLayout(level).surfaceOffset);
+        CHECK_EQ(bare.levelLayout(level).offsetXBlocks, parsed.levelLayout(level).offsetXBlocks);
+        CHECK_EQ(bare.levelLayout(level).offsetYBlocks, parsed.levelLayout(level).offsetYBlocks);
+        CHECK(bare.extractLevel(level).data == parsed.extractLevel(level).data);
+        CHECK(bare.decodeLevel(level).rgba == parsed.decodeLevel(level).rgba);
+    }
+    // The owning overload takes the data as it is.
+    const xds::Texture moved =
+        xds::Texture::fromData(parsed.info(), std::vector<std::uint8_t>(data.begin(), data.end()));
+    CHECK(moved.decodeLevel(0).rgba == parsed.decodeLevel(0).rgba);
+}
+
+TEST_CASE("textures from bare data are checked like files")
+{
+    synthetic::Spec spec;
+    const xds::Texture reference = xds::Texture::parse(synthetic::file(spec, 1 << 20));
+    xds::TextureInfo info = reference.info();
+
+    CHECK_THROWS(xds::Texture::fromData(info, std::vector<std::uint8_t>(100)));
+
+    xds::TextureInfo empty = info;
+    empty.width = 0;
+    CHECK_THROWS(xds::Texture::fromData(empty, std::vector<std::uint8_t>(1 << 20)));
+
+    xds::TextureInfo unsupported = info;
+    unsupported.format = 26;
+    CHECK_THROWS(xds::Texture::fromData(unsupported, std::vector<std::uint8_t>(1 << 20)));
+
+    xds::TextureInfo cube = info;
+    cube.dimension = xds::Dimension::Cube;
+    CHECK_THROWS(xds::Texture::fromData(cube, std::vector<std::uint8_t>(1 << 20)));
+
+    xds::TextureInfo narrow = info;
+    narrow.pitch = 0;
+    CHECK_THROWS(xds::Texture::fromData(narrow, std::vector<std::uint8_t>(1 << 20)));
+}
+
 TEST_CASE("layout of a wide DXT5 texture matches the game file")
 {
     const std::array<std::uint32_t, 6> fetch{0x840000FE, 0x00000075, 0x000FE1FF, 0x00000D10, 0x00000240, 0x00010A00};

@@ -71,6 +71,20 @@ std::vector<std::uint8_t> png = xds::writePng(top);
 
 `Texture::parse()` takes the file's bytes from memory, for data read out of an archive. Errors are thrown as `xds::Error`. `xds::looksLikeXds()` checks a header cheaply, for format sniffing.
 
+Textures that come without an `.xds` header, such as those a game keeps in containers of its own, go through `Texture::fromData()` with a `TextureInfo` filled in from whatever the container stores. `baseAddress` and `mipAddress` are offsets into the data, which is tiled and byte-swapped as the GPU reads it. The layout and checks are the same as for a file, and `header()` holds the info as a fetch constant. `xds::encodeFetchConstant()` does that encoding on its own, the inverse of `xds::decodeFetchConstant()`.
+
+```cpp
+xds::TextureInfo info;
+info.format = static_cast<std::uint32_t>(xds::Format::kDxn);
+info.endian = xds::Endian::Swap8In16;
+info.tiled = true;
+info.width = 512;
+info.height = 512;
+info.pitch = 512;                                    // row pitch in texels, a whole number of tiles
+const xds::Texture texture = xds::Texture::fromData(info, topLevel);
+xds::Image normals = texture.decodeLevel(0);
+```
+
 With CMake, either add this directory with `add_subdirectory` and link `xds::xds`, or install it and use `find_package(xds)`.
 
 ## Gwenview

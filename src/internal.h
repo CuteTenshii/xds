@@ -9,6 +9,12 @@
 
 namespace xds::detail {
 
+/// The fetch constant's type field for a texture (as opposed to a vertex
+/// fetch).
+inline constexpr std::uint32_t kFetchTypeTexture = 2;
+/// D3DCOMMON_TYPE_TEXTURE in the low bits of the D3DResource Common field.
+inline constexpr std::uint32_t kCommonTypeTexture = 3;
+
 inline std::uint32_t be32(const std::uint8_t* p)
 {
     return (static_cast<std::uint32_t>(p[0]) << 24) | (static_cast<std::uint32_t>(p[1]) << 16)

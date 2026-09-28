@@ -153,6 +153,16 @@ public:
     static Texture parse(std::vector<std::uint8_t>&& file);
     /// Like parse(), reading the file first. Throws Error if it cannot be read.
     static Texture load(const std::string& path);
+    /// A texture from its description and its texture memory, for data that
+    /// comes without an .xds header, such as textures a game packs in
+    /// containers of its own. `info` holds what the fetch constant would:
+    /// `baseAddress` and `mipAddress` are byte offsets into `data`, which is
+    /// tiled and byte-swapped as the GPU reads it. Throws Error in the same
+    /// cases as parse(). header() then holds `info` encoded as a fetch
+    /// constant (see encodeFetchConstant()), with the other fields of a
+    /// texture resource zero.
+    static Texture fromData(const TextureInfo& info, std::span<const std::uint8_t> data);
+    static Texture fromData(const TextureInfo& info, std::vector<std::uint8_t>&& data);
 
     const Header& header() const { return m_header; }
     const TextureInfo& info() const { return m_info; }
@@ -170,9 +180,15 @@ public:
 
 private:
     Texture() = default;
-    void init();
+    /// Reads the header of the .xds file in m_bytes.
+    void readFileHeader();
+    /// Checks m_info and lays out its levels in textureData().
+    void layOut();
 
-    std::vector<std::uint8_t> m_file;
+    /// The whole .xds file, or only the texture data for fromData().
+    std::vector<std::uint8_t> m_bytes;
+    /// Where the texture data starts in m_bytes.
+    std::size_t m_dataOffset = 0;
     Header m_header;
     TextureInfo m_info;
     std::vector<LevelLayout> m_levels;
@@ -185,6 +201,11 @@ bool looksLikeXds(std::span<const std::uint8_t> data);
 /// Decodes the header fields without touching the texture data.
 Header readHeader(std::span<const std::uint8_t> data);
 TextureInfo decodeFetchConstant(const std::array<std::uint32_t, 6>& fetchConstant);
+/// The fetch constant that decodeFetchConstant() turns back into `info`.
+/// Fields the fetch constant has no room for are cut to fit: sizes and
+/// addresses to their bit widths, `expAdjust` to 6 bits, and
+/// `signedFormat` sets all four channels signed.
+std::array<std::uint32_t, 6> encodeFetchConstant(const TextureInfo& info);
 
 /// The XDK name of a GPUTEXTUREFORMAT value, such as "DXT4_5_AS_16_16_16_16".
 std::string_view formatName(std::uint32_t format);

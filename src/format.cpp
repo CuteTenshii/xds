@@ -76,11 +76,8 @@ constexpr std::array<std::string_view, 64> kFormatNames{
     "2_10_10_10_FLOAT_EDRAM",
 };
 
-/// The fetch constant's type field for a texture (as opposed to a vertex
-/// fetch).
-constexpr std::uint32_t kFetchTypeTexture = 2;
-/// D3DCOMMON_TYPE_TEXTURE in the low bits of the D3DResource Common field.
-constexpr std::uint32_t kCommonTypeTexture = 3;
+using detail::kCommonTypeTexture;
+using detail::kFetchTypeTexture;
 constexpr std::uint32_t kCommonTypeMask = 0xF;
 
 std::int32_t signExtend(std::uint32_t value, unsigned bits)
@@ -259,6 +256,47 @@ TextureInfo decodeFetchConstant(const std::array<std::uint32_t, 6>& fetch)
     info.packedMips = ((w5 >> 11) & 1) != 0;
     info.mipAddress = w5 & 0xFFFFF000u;
     return info;
+}
+
+std::array<std::uint32_t, 6> encodeFetchConstant(const TextureInfo& info)
+{
+    // The inverse of decodeFetchConstant(), field for field.
+    const std::uint32_t signedChannels = info.signedFormat ? 0x55u : 0u;
+    const std::uint32_t w0 = kFetchTypeTexture | (signedChannels << 2) | (((info.pitch >> 5) & 0x1FF) << 22)
+        | (info.tiled ? 1u << 31 : 0u);
+
+    const bool stacked = info.dimension == Dimension::TwoD && info.depth > 1;
+    const std::uint32_t w1 = (info.format & 0x3F) | ((static_cast<std::uint32_t>(info.endian) & 3) << 6)
+        | (stacked ? 1u << 10 : 0u) | (info.baseAddress & 0xFFFFF000u);
+
+    const std::uint32_t width = info.width == 0 ? 0 : info.width - 1;
+    const std::uint32_t height = info.height == 0 ? 0 : info.height - 1;
+    const std::uint32_t depth = info.depth == 0 ? 0 : info.depth - 1;
+    std::uint32_t w2 = 0;
+    switch (info.dimension) {
+    case Dimension::OneD:
+        w2 = width & 0xFFFFFF;
+        break;
+    case Dimension::TwoD:
+        w2 = (width & 0x1FFF) | ((height & 0x1FFF) << 13) | (stacked ? (depth & 0x3F) << 26 : 0u);
+        break;
+    case Dimension::ThreeD:
+        w2 = (width & 0x7FF) | ((height & 0x7FF) << 11) | ((depth & 0x3FF) << 22);
+        break;
+    case Dimension::Cube:
+        w2 = (width & 0x1FFF) | ((height & 0x1FFF) << 13);
+        break;
+    }
+
+    std::uint32_t swizzle = 0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        swizzle |= static_cast<std::uint32_t>(info.swizzle[i]) << (3 * i);
+    }
+    const std::uint32_t w3 = (swizzle << 1) | ((static_cast<std::uint32_t>(info.expAdjust) & 0x3F) << 13);
+    const std::uint32_t w4 = ((info.minMipLevel & 0xF) << 2) | ((info.maxMipLevel & 0xF) << 6);
+    const std::uint32_t w5 = ((static_cast<std::uint32_t>(info.dimension) & 3) << 9)
+        | (info.packedMips ? 1u << 11 : 0u) | (info.mipAddress & 0xFFFFF000u);
+    return {w0, w1, w2, w3, w4, w5};
 }
 
 bool looksLikeXds(std::span<const std::uint8_t> data)

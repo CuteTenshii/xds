@@ -123,8 +123,27 @@ Texture Texture::parse(std::span<const std::uint8_t> file)
 Texture Texture::parse(std::vector<std::uint8_t>&& file)
 {
     Texture texture;
-    texture.m_file = std::move(file);
-    texture.init();
+    texture.m_bytes = std::move(file);
+    texture.m_dataOffset = kHeaderSize;
+    texture.readFileHeader();
+    texture.layOut();
+    return texture;
+}
+
+Texture Texture::fromData(const TextureInfo& info, std::span<const std::uint8_t> data)
+{
+    return fromData(info, std::vector<std::uint8_t>(data.begin(), data.end()));
+}
+
+Texture Texture::fromData(const TextureInfo& info, std::vector<std::uint8_t>&& data)
+{
+    Texture texture;
+    texture.m_bytes = std::move(data);
+    texture.m_dataOffset = 0;
+    texture.m_header.common = detail::kCommonTypeTexture;
+    texture.m_header.fetchConstant = encodeFetchConstant(info);
+    texture.m_info = info;
+    texture.layOut();
     return texture;
 }
 
@@ -143,7 +162,7 @@ Texture Texture::load(const std::string& path)
 
 std::span<const std::uint8_t> Texture::textureData() const
 {
-    return std::span<const std::uint8_t>(m_file).subspan(kHeaderSize);
+    return std::span<const std::uint8_t>(m_bytes).subspan(m_dataOffset);
 }
 
 const LevelLayout& Texture::levelLayout(std::uint32_t level) const
@@ -155,14 +174,20 @@ const LevelLayout& Texture::levelLayout(std::uint32_t level) const
     return m_levels[level];
 }
 
-void Texture::init()
+void Texture::readFileHeader()
 {
-    m_header = readHeader(m_file);
-    m_info = decodeFetchConstant(m_header.fetchConstant);
-    const TextureInfo& info = m_info;
-
-    if ((m_header.fetchConstant[0] & 3) != 2) {
+    m_header = readHeader(m_bytes);
+    if ((m_header.fetchConstant[0] & 3) != detail::kFetchTypeTexture) {
         throw Error("header does not hold a texture fetch constant");
+    }
+    m_info = decodeFetchConstant(m_header.fetchConstant);
+}
+
+void Texture::layOut()
+{
+    const TextureInfo& info = m_info;
+    if (info.width == 0 || info.height == 0) {
+        throw Error("texture size " + std::to_string(info.width) + "x" + std::to_string(info.height) + " is empty");
     }
     if (info.dimension != Dimension::TwoD || info.depth != 1) {
         static constexpr std::string_view kNames[] = {"1D", "2D", "3D", "cube"};
@@ -267,7 +292,7 @@ void Texture::init()
         }
 
         const std::uint64_t extent = levelExtent(layout, info.tiled, blockBytes);
-        const std::size_t available = m_file.size() - kHeaderSize;
+        const std::size_t available = textureData().size();
         if (extent > available) {
             throw Error("texture data is " + std::to_string(available) + " bytes but level " + std::to_string(level)
                 + " needs " + std::to_string(extent));
