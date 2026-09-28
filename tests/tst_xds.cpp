@@ -190,6 +190,35 @@ TEST_CASE("textures from bare data lay out and decode as their files do")
     CHECK(moved.decodeLevel(0).rgba == parsed.decodeLevel(0).rgba);
 }
 
+TEST_CASE("tiled data may end with the last block the level uses")
+{
+    // A 4x4 DXT1 texture in the packed tail uses one block of a whole tile,
+    // and the game's bundle packs store it only that far.
+    xds::TextureInfo info;
+    info.format = static_cast<std::uint32_t>(xds::Format::kDxt1);
+    info.endian = xds::Endian::Swap8In16;
+    info.tiled = true;
+    info.packedMips = true;
+    info.width = 4;
+    info.height = 4;
+    info.pitch = 128;
+    const xds::LevelLayout layout =
+        xds::Texture::fromData(info, std::vector<std::uint8_t>(1 << 16)).levelLayout(0);
+    const std::uint32_t blockEnd = xds::tiledOffset2D(layout.offsetXBlocks, layout.offsetYBlocks, 32, 3) + 8;
+    CHECK(blockEnd < layout.surfaceSize);
+
+    std::vector<std::uint8_t> data(blockEnd, 0);
+    const std::vector<std::uint8_t> red = colorBlock(0xF800, 0xF800, 0);
+    for (std::size_t i = 0; i < 8; i += 2) {
+        data[blockEnd - 8 + i] = red[i + 1];
+        data[blockEnd - 8 + i + 1] = red[i];
+    }
+    const xds::Image image = xds::Texture::fromData(info, data).decodeLevel(0);
+    CHECK(pixel(image, 3, 3) == Pixel({255, 0, 0, 255}));
+    data.pop_back();
+    CHECK_THROWS(xds::Texture::fromData(info, data));
+}
+
 TEST_CASE("textures from bare data are checked like files")
 {
     synthetic::Spec spec;
@@ -233,8 +262,9 @@ TEST_CASE("layout of a wide DXT5 texture matches the game file")
     CHECK_EQ(texture.levelLayout(1).width, 256u);
     CHECK_EQ(texture.levelLayout(9).width, 1u);
     CHECK_THROWS(texture.levelLayout(10));
-    // One byte short and the packed tail no longer fits.
-    CHECK_THROWS(fromFetch(fetch, 0x1FFFF));
+    // Data that stops inside the packed tail's surface, before the blocks
+    // its levels use, does not fit.
+    CHECK_THROWS(fromFetch(fetch, 0x1C100));
 }
 
 TEST_CASE("layout of a square 8_8_8_8 texture matches the game file")

@@ -85,17 +85,29 @@ std::uint32_t blocksFor(std::uint32_t texels, std::uint32_t edge)
 }
 
 /// Bytes from the start of the texture data up to the end of the last block
-/// the level occupies.
+/// the level occupies. Data may end there: the game's own containers store
+/// small tiled textures only up to their last block, not to the end of the
+/// tile.
 std::uint64_t levelExtent(const LevelLayout& layout, bool tiled, std::uint32_t bytesPerBlock)
 {
-    const std::uint64_t lastRow = static_cast<std::uint64_t>(layout.offsetYBlocks) + layout.blocksHigh - 1;
-    const std::uint64_t rowBytes = static_cast<std::uint64_t>(layout.surfacePitchBlocks) * bytesPerBlock;
+    const std::uint32_t firstRow = layout.offsetYBlocks;
+    const std::uint32_t lastRow = layout.offsetYBlocks + layout.blocksHigh - 1;
     if (tiled) {
-        // A tiled surface stores each band of 32 block rows contiguously, so
-        // the level ends with the band holding its last row.
-        return layout.surfaceOffset + (lastRow / kTileBlocks + 1) * rowBytes * kTileBlocks;
+        // Each band of 32 block rows is stored after the ones above it, so
+        // the block stored last is in the level's last band.
+        const std::uint32_t log2Bytes = static_cast<std::uint32_t>(std::countr_zero(bytesPerBlock));
+        const std::uint32_t bandStart = std::max(firstRow, lastRow / kTileBlocks * kTileBlocks);
+        std::uint64_t end = 0;
+        for (std::uint32_t y = bandStart; y <= lastRow; ++y) {
+            for (std::uint32_t x = layout.offsetXBlocks; x < layout.offsetXBlocks + layout.blocksWide; ++x) {
+                end = std::max<std::uint64_t>(end,
+                    static_cast<std::uint64_t>(tiledOffset2D(x, y, layout.surfacePitchBlocks, log2Bytes)) + bytesPerBlock);
+            }
+        }
+        return layout.surfaceOffset + end;
     }
-    return layout.surfaceOffset + lastRow * rowBytes
+    const std::uint64_t rowBytes = static_cast<std::uint64_t>(layout.surfacePitchBlocks) * bytesPerBlock;
+    return layout.surfaceOffset + static_cast<std::uint64_t>(lastRow) * rowBytes
         + (static_cast<std::uint64_t>(layout.offsetXBlocks) + layout.blocksWide) * bytesPerBlock;
 }
 
